@@ -2,7 +2,8 @@
 	// Config
 	const COLS = 24; // hours
 	const ROWS = 7;  // days
-	const TICK_MS = 120;
+	const BASE_TICK_MS = 240; // start slower
+	const MIN_TICK_MS = 70;   // don't go faster than this
 	const HIGHLIGHT_ROW = 2; // 0=Mon ... 2=Wed like screenshot
 
 	// DOM
@@ -10,6 +11,7 @@
 	const hoursHeaderEl = document.getElementById('hours-header');
 	const daysHeaderEl = document.getElementById('days-header');
 	const scoreEl = document.getElementById('score');
+	const bestScoreEl = document.getElementById('best-score');
 	const overlayEl = document.getElementById('overlay');
 	const finalScoreEl = document.getElementById('final-score');
 	const overlayTitleEl = document.getElementById('overlay-title');
@@ -25,6 +27,7 @@
 	let nextDir = { x: 1, y: 0 };
 	let food = null;
 	let score = 0;
+	let bestScore = 0;
 	let playing = false;
 	let paused = false;
 	let rafId = null;
@@ -33,6 +36,7 @@
 	// Helpers
 	const idx = (x, y) => y * COLS + x;
 	const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+	const getTickMs = () => Math.max(MIN_TICK_MS, BASE_TICK_MS - score * 12);
 	function syncSquares() {
 		// Make rows match the first cell width to enforce perfect squares
 		const firstCell = gridEl.firstElementChild;
@@ -93,6 +97,7 @@
 	function resetGame() {
 		score = 0;
 		scoreEl.textContent = '0';
+		bestScoreEl.textContent = String(bestScore);
 		dir = { x: 1, y: 0 };
 		nextDir = { x: 1, y: 0 };
 		const startX = 4;
@@ -187,6 +192,12 @@
 		if (food && nx === food.x && ny === food.y) {
 			score += 1;
 			scoreEl.textContent = String(score);
+			// Update best score immediately to feel responsive
+			if (score > bestScore) {
+				bestScore = score;
+				bestScoreEl.textContent = String(bestScore);
+				try { localStorage.setItem('dtek_snake_best', String(bestScore)); } catch {}
+			}
 			placeFood();
 		} else {
 			snake.pop();
@@ -196,7 +207,7 @@
 
 	function gameLoop(ts) {
 		if (!playing || paused) return;
-		if (ts - lastTick >= TICK_MS) {
+		if (ts - lastTick >= getTickMs()) {
 			lastTick = ts;
 			step();
 		}
@@ -231,32 +242,32 @@
 		playing = false;
 		cancelAnimationFrame(rafId);
 		finalScoreEl.textContent = String(score);
-		overlayTitleEl.textContent = win ? 'You Filled the Grid!' : 'Game Over';
-		overlayMsgEl.innerHTML = `Your score: <strong id="final-score">${score}</strong>`;
+		overlayTitleEl.textContent = win ? 'Ви заповнили сітку!' : 'Гра закінчилась';
+		overlayMsgEl.innerHTML = `Ваш рахунок: <strong id="final-score">${score}</strong>`;
 		overlayEl.hidden = false;
 	}
 
 	// Input: keyboard
 	window.addEventListener('keydown', (e) => {
-		switch (e.key) {
-			case 'ArrowUp':
-			case 'w':
-			case 'W':
-				setDir(0, -1); break;
-			case 'ArrowDown':
-			case 's':
-			case 'S':
-				setDir(0, 1); break;
-			case 'ArrowLeft':
-			case 'a':
-			case 'A':
-				setDir(-1, 0); break;
-			case 'ArrowRight':
-			case 'd':
-			case 'D':
-				setDir(1, 0); break;
-			case ' ':
-				pauseGame(); break;
+		const code = e.code;
+		const k = e.key;
+		// Support browsers that localize `code` (e.g., 'KeyЦ', 'KeyФ', etc.)
+		const isUp    = code === 'ArrowUp'   || code === 'KeyW' || code === 'KeyЦ' || k === 'w' || k === 'W' || k === 'ц' || k === 'Ц';
+		const isDown  = code === 'ArrowDown' || code === 'KeyS' || code === 'KeyІ' || code === 'KeyЫ' || k === 's' || k === 'S' || k === 'і' || k === 'І' || k === 'ы' || k === 'Ы';
+		const isLeft  = code === 'ArrowLeft' || code === 'KeyA' || code === 'KeyФ' || k === 'a' || k === 'A' || k === 'ф' || k === 'Ф';
+		const isRight = code === 'ArrowRight'|| code === 'KeyD' || code === 'KeyВ' || k === 'd' || k === 'D' || k === 'в' || k === 'В';
+		const isPause = code === 'Space' || k === ' ';
+
+		if (isUp) {
+			e.preventDefault(); setDir(0, -1);
+		} else if (isDown) {
+			e.preventDefault(); setDir(0, 1);
+		} else if (isLeft) {
+			e.preventDefault(); setDir(-1, 0);
+		} else if (isRight) {
+			e.preventDefault(); setDir(1, 0);
+		} else if (isPause) {
+			e.preventDefault(); pauseGame();
 		}
 	});
 
@@ -291,10 +302,12 @@
 	});
 
 	// Init
+	try {
+		const saved = parseInt(localStorage.getItem('dtek_snake_best') || '0', 10);
+		if (!Number.isNaN(saved)) bestScore = saved;
+	} catch {}
 	buildHeaders();
 	buildGrid();
 	resetGame();
 	window.addEventListener('resize', syncSquares);
 })();
-
-
