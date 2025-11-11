@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Гра "Змійка" в стилі ДТЕК</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+	<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+	<div class="app">
+		<header class="app-header">
+			<div class="brand">
+				<div class="brand-accent"></div>
+				<div class="brand-title">Графік відключень</div>
+				<div class="brand-subtitle">Моделювання у вигляді гри «Змійка»</div>
+			</div>
+			<div class="controls">
+				<button id="btn-new" class="btn">Нова гра</button>
+				<button id="btn-pause" class="btn">Пауза</button>
+				<div class="score">
+					<span>Рахунок</span>
+					<strong id="score">0</strong>
+				</div>
+			</div>
+		</header>
+
+		<main class="grid-wrap">
+			<div class="grid-header top">
+				<div class="corner">Часові проміжки</div>
+				<div class="hours" id="hours-header"></div>
+			</div>
+			<div class="grid-body">
+				<div class="days" id="days-header"></div>
+				<div class="grid" id="grid" role="grid" aria-label="DTEK-style blackout grid"></div>
+			</div>
+		</main>
+
+		<footer class="tips">
+			<div>Стрілки або WASD для переміщення. Їжте жовті клітини, щоб рости. Уникайте стін і себе самого.</div>
+			<div>На мобільному пристрої: проведіть пальцем по будь-якому місцю сітки.</div>
+			<div class="credits">Автор: <a href="https://github.com/mstohnii" target="_blank" rel="noopener noreferrer">Maksym Stohnii</a></div>
+		</footer>
+	</div>
+
+	<div class="overlay" id="overlay" hidden>
+		<div class="card">
+			<h2 id="overlay-title">Гра закінчилась</h2>
+			<p id="overlay-msg">Ваш рахунок: <strong id="final-score">0</strong></p>
+			<div class="card-actions">
+				<button id="btn-restart" class="btn primary">Почати заново</button>
+				<button id="btn-close" class="btn">Закрити</button>
+			</div>
+		</div>
+	</div>
+
+	<script src="script.js"></script>
+	</body>
+</html>
+
+
