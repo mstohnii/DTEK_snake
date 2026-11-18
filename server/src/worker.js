@@ -13,6 +13,8 @@ import { replay } from '../../src/replay.js';
 const TICKET_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const MAX_BODY_BYTES = 256 * 1024;
 const SUBMITS_PER_MINUTE = 6;
+// A player needs one ticket per game (plus one per difficulty switch); this is generous.
+const TICKETS_PER_MINUTE = 30;
 const BOARD_SIZE = 10;
 // The browser may lag a little behind the ideal pace; accept runs at ≥ 85% of real time.
 const SPEED_TOLERANCE = 0.85;
@@ -57,6 +59,26 @@ export function cleanName(raw) {
 	return NAME_RE.test(name) ? name : null;
 }
 
+/**
+ * Atomic per-IP rate limit: count and record in ONE statement, so concurrent requests
+ * can't all pass the check before any of them is recorded. Returns true when allowed.
+ */
+async function takeRateSlot(db, kind, ipHash, limit, nowMs) {
+	const res = await db.prepare(
+		`INSERT INTO rate_events (kind, ip_hash, created_at)
+		 SELECT ?1, ?2, ?3
+		 WHERE (SELECT COUNT(*) FROM rate_events WHERE kind = ?1 AND ip_hash = ?2 AND created_at > ?4) < ?5`,
+	)
+		.bind(kind, ipHash, nowMs, nowMs - 60_000, limit)
+		.run();
+	return (res?.meta?.changes ?? 0) > 0;
+}
+
+async function hashIp(request, secret) {
+	const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+	return (await sha256Hex(`${secret}:${ip}`)).slice(0, 32);
+}
+
 function corsHeaders(request, env) {
 	const origin = request.headers.get('Origin');
 	const allowed = (env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -88,6 +110,8 @@ export function createHandler({ now = () => Date.now() } = {}) {
 			const body = await readJson(request);
 			const difficulty = body?.difficulty;
 			if (!Object.hasOwn(DIFFICULTIES, difficulty)) return error('bad-difficulty', 400);
+			const ipHash = await hashIp(request, env.TOKEN_SECRET);
+			if (!(await takeRateSlot(env.DB, 'ticket', ipHash, TICKETS_PER_MINUTE, now()))) return error('rate-limited', 429);
 			const seed = crypto.getRandomValues(new Uint32Array(1))[0];
 			const issuedAt = now();
 			const ticket = { v: 1, id: crypto.randomUUID(), seed, d: difficulty, t: issuedAt };
@@ -108,14 +132,9 @@ export function createHandler({ now = () => Date.now() } = {}) {
 			if (!name) return error('bad-name', 400);
 
 			// Rate-limit every attempt (accepted or not) *before* the CPU-heavy replay.
-			const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-			const ipHash = (await sha256Hex(`${env.TOKEN_SECRET}:${ip}`)).slice(0, 32);
-			const recent = await env.DB.prepare('SELECT COUNT(*) AS n FROM submit_attempts WHERE ip_hash = ? AND created_at > ?')
-				.bind(ipHash, now() - 60_000)
-				.first();
-			if ((recent?.n ?? 0) >= SUBMITS_PER_MINUTE) return error('rate-limited', 429);
-			await env.DB.prepare('INSERT INTO submit_attempts (ip_hash, created_at) VALUES (?, ?)').bind(ipHash, now()).run();
-			await env.DB.prepare('DELETE FROM submit_attempts WHERE created_at < ?').bind(now() - 60 * 60_000).run();
+			const ipHash = await hashIp(request, env.TOKEN_SECRET);
+			if (!(await takeRateSlot(env.DB, 'submit', ipHash, SUBMITS_PER_MINUTE, now()))) return error('rate-limited', 429);
+			await env.DB.prepare('DELETE FROM rate_events WHERE created_at < ?').bind(now() - 60 * 60_000).run();
 
 			const result = replay({ seed: ticket.seed, difficulty: ticket.d, inputs: body.inputs, endTick: body.endTick });
 			if (!result.ok) return error(`replay-${result.reason}`, 422);
@@ -172,13 +191,28 @@ export function createHandler({ now = () => Date.now() } = {}) {
 	};
 }
 
+/** Read a JSON body, counting real bytes as they stream in and stopping at the cap. */
 async function readJson(request) {
-	const len = Number(request.headers.get('Content-Length') ?? 0);
-	if (len > MAX_BODY_BYTES) return null;
+	if (Number(request.headers.get('Content-Length') ?? 0) > MAX_BODY_BYTES) return null;
+	if (!request.body) return null;
+	const reader = request.body.getReader();
+	const chunks = [];
+	let total = 0;
 	try {
-		const text = await request.text();
-		if (text.length > MAX_BODY_BYTES) return null;
-		return JSON.parse(text);
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > MAX_BODY_BYTES) {
+				await reader.cancel().catch(() => {});
+				return null;
+			}
+			chunks.push(value);
+		}
+		const bytes = new Uint8Array(total);
+		let offset = 0;
+		for (const c of chunks) { bytes.set(c, offset); offset += c.byteLength; }
+		return JSON.parse(new TextDecoder().decode(bytes));
 	} catch {
 		return null;
 	}

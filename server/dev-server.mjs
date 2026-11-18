@@ -11,7 +11,7 @@ const PORT = Number(process.env.PORT ?? 8787);
 const dir = new URL('./.local/', import.meta.url);
 mkdirSync(dir, { recursive: true });
 const db = new DatabaseSync(fileURLToPath(new URL('dev.sqlite', dir)));
-for (const m of ['0001_create_scores.sql', '0002_submit_attempts.sql']) {
+for (const m of ['0001_create_scores.sql', '0002_rate_events.sql']) {
 	db.exec(readFileSync(new URL(`./migrations/${m}`, import.meta.url), 'utf8'));
 }
 
@@ -23,7 +23,7 @@ const D1 = {
 			bind: (...a) => { args = a; return api; },
 			first: async () => stmt.get(...args) ?? null,
 			all: async () => ({ results: stmt.all(...args) }),
-			run: async () => { stmt.run(...args); return { success: true }; },
+			run: async () => { const r = stmt.run(...args); return { success: true, meta: { changes: Number(r.changes) } }; },
 		};
 		return api;
 	},

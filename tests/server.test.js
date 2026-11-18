@@ -8,7 +8,7 @@ import { playRun } from './helpers.js';
 // Minimal D1 stand-in over node:sqlite (same SQL dialect).
 function fakeD1() {
 	const db = new DatabaseSync(':memory:');
-	for (const m of ['0001_create_scores.sql', '0002_submit_attempts.sql']) {
+	for (const m of ['0001_create_scores.sql', '0002_rate_events.sql']) {
 		db.exec(readFileSync(new URL(`../server/migrations/${m}`, import.meta.url), 'utf8'));
 	}
 	return {
@@ -20,7 +20,7 @@ function fakeD1() {
 				bind(...a) { args = a; return api; },
 				async first() { return stmt.get(...args) ?? null; },
 				async all() { return { results: stmt.all(...args) }; },
-				async run() { stmt.run(...args); return { success: true }; },
+				async run() { const r = stmt.run(...args); return { success: true, meta: { changes: Number(r.changes) } }; },
 			};
 			return api;
 		},
@@ -165,6 +165,32 @@ test('failed attempts count too, so bogus replays cannot be spammed', async () =
 	const statuses = [];
 	for (let i = 0; i < 7; i++) statuses.push((await call('POST', '/api/scores', bogus)).status);
 	assert.deepEqual(statuses, [422, 422, 422, 422, 422, 422, 429]);
+});
+
+test('concurrent submissions cannot slip past the rate limit', async () => {
+	const { data } = await call('POST', '/api/runs', { difficulty: 'easy' });
+	clock += 10 * 60 * 1000;
+	const bogus = { token: data.token, name: 'Spam', inputs: [], endTick: 50, score: 1 };
+	const statuses = await Promise.all(Array.from({ length: 12 }, () => call('POST', '/api/scores', bogus).then((r) => r.status)));
+	assert.equal(statuses.filter((s) => s !== 429).length, 6, statuses.join(','));
+});
+
+test('ticket issuance is rate limited per IP', async () => {
+	const statuses = [];
+	for (let i = 0; i < 31; i++) statuses.push((await call('POST', '/api/runs', { difficulty: 'normal' })).status);
+	assert.equal(statuses.filter((s) => s === 200).length, 30);
+	assert.equal(statuses.at(-1), 429);
+	assert.equal((await call('POST', '/api/runs', { difficulty: 'normal' }, { 'CF-Connecting-IP': '198.51.100.9' })).status, 200);
+	clock += 61_000;
+	assert.equal((await call('POST', '/api/runs', { difficulty: 'normal' })).status, 200, 'window slides');
+});
+
+test('oversized bodies are rejected by real byte count, even without Content-Length', async () => {
+	const huge = JSON.stringify({ difficulty: 'normal', pad: 'я'.repeat(200_000) }); // ~400 KB of UTF-8, ~200k chars
+	const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(huge)); c.close(); } });
+	const res = await api.fetch(new Request('https://api.test/api/scores', { method: 'POST', body: stream, duplex: 'half', headers: { Origin: ORIGIN } }), env);
+	assert.equal(res.status, 400);
+	assert.equal((await res.json()).error, 'bad-request');
 });
 
 test('leaderboard is ordered by score, then fewer ticks', async () => {
