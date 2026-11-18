@@ -3,7 +3,9 @@
 Веб‑гра, що імітує вигляд таблиці відключень ДТЕК: 7 днів × 24 години, вертикальні підписи годин і поділ кожні 3 години. Змійка рухається по «клітинках розкладу», а на складніших рівнях графік заповнюють відключення й тимчасові стіни.
 
 ## Живе демо
-- [mstohnii.github.io/DTEK_snake](https://mstohnii.github.io/DTEK_snake/)
+- GitHub Pages: [mstohnii.github.io/DTEK_snake](https://mstohnii.github.io/DTEK_snake/)
+- Cloudflare (Workers Builds з `master`): [dtek.mstohnii.workers.dev](https://dtek.mstohnii.workers.dev/)
+- API таблиці лідерів: `https://dtek-snake-leaderboard.mstohnii.workers.dev`
 
 ## Можливості
 - **4 рівні складності** (див. таблицю нижче): швидкість, тимчасові стіни, постійні відключення та «важкі» місця для цілей.
@@ -90,6 +92,10 @@ cd server
 npm install
 cf d1 create --name dtek-snake-leaderboard
 ```
+
+Уже розгорнуто (база `dtek-snake-leaderboard`, id вписаний у конфіг). Для повторного розгортання: `cd server && npx cf deploy --secrets-file .env.production`. Секрет зберігається лише локально в `.env.production`; якщо файл загубився, згенеруйте новий: старі квитки стануть недійсними, але збережені результати лишаться.
+
+Як розгорнути з нуля:
 
 1. Впишіть `id` створеної бази в `server/cloudflare.config.ts` (`bindings.d1({ id, name })`).
 2. Застосуйте міграції: `cf d1 migrations apply <database-id> --dir migrations`.

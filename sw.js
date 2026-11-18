@@ -1,7 +1,7 @@
 // Offline support. Network-first for this site's own files, so updates show up
 // immediately when online; the cached copy is used when the network fails
 // (handy during an actual blackout). The leaderboard API is never cached.
-const VERSION = 'dtek-snake-v2.2.0';
+const VERSION = 'dtek-snake-v2.2.1';
 const CORE = [
 	'./',
 	'index.html',
