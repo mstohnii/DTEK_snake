@@ -1,0 +1,15 @@
+{
+  "name": "dtek-snake",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Snake game styled as a DTEK power outage schedule",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes serve -l 5173 .",
+    "dev:api": "node server/dev-server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

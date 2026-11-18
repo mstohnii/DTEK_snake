@@ -1,26 +1,49 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="uk">
 <head>
 	<meta charset="UTF-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Гра "Змійка" в стилі ДТЕК</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+	<meta name="theme-color" content="#ffd100" />
+	<meta name="mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+	<meta name="apple-mobile-web-app-title" content="Змійка ДТЕК" />
+	<meta name="format-detection" content="telephone=no" />
+	<meta name="description" content="Гра «Змійка» у стилі графіка відключень ДТЕК" />
+	<!-- Leaderboard Worker URL, e.g. https://dtek-snake-leaderboard.<account>.workers.dev. Empty = offline (localhost uses the dev server). -->
+	<meta name="leaderboard-api" content="" />
+	<title>Гра «Змійка» в стилі ДТЕК</title>
+	<link rel="icon" href="assets/target.svg" type="image/svg+xml" />
+	<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
+	<link rel="manifest" href="manifest.webmanifest" />
+	<script>
+		// Apply the saved theme before first paint to avoid a flash of the wrong colours.
+		(function () {
+			var t = 'auto';
+			try { t = (JSON.parse(localStorage.getItem('dtek_snake_settings') || '{}').theme) || 'auto'; } catch (e) {}
+			if (t === 'auto') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+			document.documentElement.dataset.theme = t;
+		})();
+	</script>
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 	<link rel="stylesheet" href="styles.css" />
+	<script type="module" src="src/main.js"></script>
 </head>
 <body>
 	<div class="app">
 		<header class="app-header">
 			<div class="brand">
-				<div class="brand-accent"></div>
-				<div class="brand-title">Графік відключень</div>
+				<div class="brand-accent" aria-hidden="true"></div>
+				<h1 class="brand-title">Графік відключень</h1>
 				<div class="brand-subtitle">Моделювання у вигляді гри «Змійка»</div>
 			</div>
 			<div class="controls">
-				<button id="btn-new" class="btn">Нова гра</button>
-				<button id="btn-pause" class="btn">Пауза</button>
-				<div class="score">
+				<button id="btn-new" class="btn" type="button">Нова гра</button>
+				<button id="btn-pause" class="btn" type="button">Старт</button>
+				<button id="btn-fullscreen" class="btn icon-btn" type="button" aria-label="На весь екран" title="На весь екран" hidden>⛶</button>
+				<div class="score" aria-live="polite">
 					<span>Рахунок:</span>
 					<strong id="score">0</strong>
 				</div>
@@ -31,36 +54,79 @@
 			</div>
 		</header>
 
-		<main class="grid-wrap">
-			<div class="grid-header top">
-				<div class="corner">Часові проміжки</div>
-				<div class="hours" id="hours-header"></div>
-			</div>
-			<div class="grid-body">
-				<div class="days" id="days-header"></div>
-				<div class="grid" id="grid" role="grid" aria-label="DTEK-style blackout grid"></div>
-			</div>
+		<div class="options">
+			<fieldset class="difficulty" id="difficulty">
+				<legend>Складність</legend>
+				<!-- options are rendered from DIFFICULTIES in src/config.js -->
+			</fieldset>
+			<label class="theme-picker">
+				<span>Тема</span>
+				<select id="theme"></select>
+			</label>
+		</div>
+
+		<main class="play-area" id="play-area">
+		<div class="board-wrap" id="board-wrap">
+			<div class="board" id="board" aria-label="Ігрове поле у вигляді графіка відключень: 7 днів на 24 години"></div>
+			<button class="board-status" id="board-status" type="button" hidden></button>
+			<span class="ranked-badge" id="ranked-badge" hidden></span>
+		</div>
+
+		<div class="dpad" id="dpad" aria-label="Керування">
+			<button type="button" class="dpad-btn up" data-action="up" aria-label="Вгору">▲</button>
+			<button type="button" class="dpad-btn left" data-action="left" aria-label="Ліворуч">◀</button>
+			<button type="button" class="dpad-btn mid" data-action="pause" aria-label="Пауза">❚❚</button>
+			<button type="button" class="dpad-btn right" data-action="right" aria-label="Праворуч">▶</button>
+			<button type="button" class="dpad-btn down" data-action="down" aria-label="Вниз">▼</button>
+		</div>
 		</main>
 
+		<p class="rotate-hint" id="rotate-hint">↻ Поверніть телефон горизонтально — клітинки стануть більшими.</p>
+
+		<div class="legend" aria-label="Позначення">
+			<span class="legend-item"><i class="swatch food" aria-hidden="true"></i>ціль +1</span>
+			<span class="legend-item"><i class="swatch bonus" aria-hidden="true"></i>світло дали +3</span>
+			<span class="legend-item"><i class="swatch outage" aria-hidden="true"></i>відключення</span>
+			<span class="legend-item"><i class="swatch tempwall-warn" aria-hidden="true"></i>скоро відключення</span>
+			<span class="legend-item"><i class="swatch tempwall" aria-hidden="true"></i>тимчасова стіна</span>
+		</div>
+
+		<section class="leaderboard" aria-labelledby="lb-title">
+			<div class="lb-head">
+				<h2 id="lb-title">Таблиця лідерів</h2>
+				<div class="lb-tabs" id="lb-tabs" role="tablist" aria-label="Складність"></div>
+			</div>
+			<ol class="lb-list" id="lb-list"></ol>
+			<p class="lb-status" id="lb-status"></p>
+		</section>
+
 		<footer class="tips">
-			<div>Стрілки або WASD для переміщення. Їжте жовті клітини, щоб рости. Уникайте стін і себе самого.</div>
+			<div>Стрілки або WASD — рух, пробіл — пауза, Enter — нова гра. На телефоні — свайпи або кнопки.</div>
 			<div class="credits">Автор: <a href="https://github.com/mstohnii" target="_blank" rel="noopener noreferrer">Maksym Stohnii</a></div>
 		</footer>
 	</div>
 
 	<div class="overlay" id="overlay" hidden>
-		<div class="card">
+		<div class="card" role="dialog" aria-modal="true" aria-labelledby="overlay-title">
 			<h2 id="overlay-title">Гра закінчилась</h2>
-			<p id="overlay-msg">Ваш рахунок: <strong id="final-score">0</strong></p>
+			<p id="overlay-reason"></p>
+			<p>Ваш рахунок: <strong id="final-score">0</strong> <span class="muted" id="final-difficulty"></span></p>
+			<p id="new-record" class="new-record" hidden>Новий рекорд!</p>
+
+			<form class="submit-form" id="submit-form" hidden>
+				<label for="player-name">Ваше ім’я для таблиці лідерів</label>
+				<div class="submit-row">
+					<input id="player-name" name="name" type="text" maxlength="16" minlength="2" autocomplete="nickname" autocapitalize="words" autocorrect="off" spellcheck="false" enterkeyhint="send" required />
+					<button id="btn-submit" class="btn primary" type="submit">Надіслати</button>
+				</div>
+			</form>
+			<p class="submit-status" id="submit-status" role="status"></p>
+
 			<div class="card-actions">
-				<button id="btn-restart" class="btn primary">Почати заново</button>
-				<button id="btn-close" class="btn">Закрити</button>
+				<button id="btn-close" class="btn" type="button">Закрити</button>
+				<button id="btn-restart" class="btn primary" type="button">Ще раз</button>
 			</div>
 		</div>
 	</div>
-
-	<script src="script.js"></script>
-	</body>
+</body>
 </html>
-
-
