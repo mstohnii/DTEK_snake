@@ -15,3 +15,4 @@ jobs:
           node-version: 24
       - run: node --check src/*.js server/src/*.js
       - run: npm test
+      - run: npm run qa

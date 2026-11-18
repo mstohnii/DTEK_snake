@@ -10,12 +10,27 @@ export class LeaderboardError extends Error {
 	}
 }
 
-/** Where the API lives: <meta name="leaderboard-api">, or the local dev server on localhost. */
+/**
+ * Where the API lives. On localhost always the local dev server (`npm run dev:api`),
+ * so development and QA never write to the real leaderboard; otherwise <meta name="leaderboard-api">.
+ */
 export function resolveApiBase(doc = document, loc = location) {
-	const meta = doc.querySelector('meta[name="leaderboard-api"]')?.content?.trim();
-	if (meta) return meta.replace(/\/+$/, '');
 	if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1') return 'http://localhost:8787';
-	return '';
+	const meta = doc.querySelector('meta[name="leaderboard-api"]')?.content?.trim();
+	return meta ? meta.replace(/\/+$/, '') : '';
+}
+
+/** Message after a successful submit. The board shows each player's best run, so rank is for that. */
+export function submitResultText({ score, best, rank }, levelLabel) {
+	const place = `${rank}-му місці («${levelLabel}»)`;
+	if (best != null && best > score) return `Збережено! Ваш рекорд — ${best}, з ним ви на ${place}.`;
+	return `Збережено! Ви на ${place}.`;
+}
+
+/** The viewer's own row: the run just submitted, or any row with the name they play under. */
+export function isOwnEntry(entry, { lastId, playerName }) {
+	if (lastId && entry.id === lastId) return true;
+	return Boolean(playerName) && entry.name.toLowerCase() === playerName.trim().toLowerCase();
 }
 
 export function createLeaderboardClient(baseUrl) {
@@ -56,6 +71,7 @@ export function createLeaderboardClient(baseUrl) {
 const ERROR_TEXT = {
 	network: 'Немає зв’язку з сервером таблиці.',
 	'bad-name': 'Ім’я: 2–16 символів — літери, цифри, пробіл, крапка, дефіс.',
+	'reserved-name': 'Це ім’я схоже на системне повідомлення. Оберіть інше.',
 	'rate-limited': 'Забагато спроб. Спробуйте за хвилину.',
 	'already-submitted': 'Цей результат уже в таблиці.',
 	'ticket-expired': 'Гра тривала надто довго, щоб потрапити в таблицю.',

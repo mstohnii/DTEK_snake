@@ -42,14 +42,17 @@ function chooseDir(g) {
 	return best;
 }
 
-export function playRun({ seed, difficulty, maxTicks = 20_000 }) {
+export function playRun({ seed, difficulty, maxTicks = 20_000, giveUpAt = 3_000 }) {
 	const g = createGame({ seed, difficulty });
 	const rec = createRecorder();
 	start(g);
 	let sawTempWall = false;
 	while (g.status === 'running') {
 		if (g.ticks >= maxTicks) throw new Error('bot never finished');
-		const dir = chooseDir(g);
+		// A greedy bot can circle forever when the food is walled off. After a while, stop
+		// steering: with solid walls it then crashes within one board width.
+		const givingUp = g.ticks >= giveUpAt && !g.rules.wrap;
+		const dir = givingUp ? null : chooseDir(g);
 		if (dir && dir !== g.dir && queueDirection(g, dir)) rec.record(g, dir);
 		const events = tick(g);
 		if (events.some((e) => e.type === 'tempwall-warn')) sawTempWall = true;

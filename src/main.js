@@ -5,7 +5,7 @@ import { bindKeyboard, bindSwipe, bindButtons } from './input.js';
 import { loadBestScores, saveBestScores, loadSettings, saveSettings } from './storage.js';
 import { createRecorder } from './replay.js';
 import { randomSeed } from './rng.js';
-import { createLeaderboardClient, resolveApiBase, errorText } from './leaderboard.js';
+import { createLeaderboardClient, resolveApiBase, errorText, submitResultText, isOwnEntry } from './leaderboard.js';
 import {
 	isTouchDevice, createWakeLock, vibrate, fullscreenSupported, toggleFullscreen,
 	onFullscreenChange, onRotate, registerServiceWorker,
@@ -311,7 +311,7 @@ async function submitScore() {
 		ticket = null; // used
 		els.submitForm.hidden = true;
 		els.submitStatus.classList.add('ok');
-		els.submitStatus.textContent = `Збережено! Ви на ${res.rank}-му місці («${DIFFICULTIES[game.difficulty].label}»).`;
+		els.submitStatus.textContent = submitResultText(res, DIFFICULTIES[game.difficulty].label);
 		showBoard(game.difficulty);
 		els.btnRestart.focus();
 	} catch (e) {
@@ -366,7 +366,7 @@ async function showBoard(difficulty) {
 function renderBoard(entries) {
 	els.lbList.replaceChildren(...entries.map((e, i) => {
 		const li = document.createElement('li');
-		if (e.id === lastSubmittedId) li.className = 'mine';
+		if (isOwnEntry(e, { lastId: lastSubmittedId, playerName: settings.playerName })) li.className = 'mine';
 		const place = document.createElement('span');
 		place.className = 'lb-place';
 		place.textContent = String(i + 1);

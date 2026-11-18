@@ -59,6 +59,26 @@ export function cleanName(raw) {
 	return NAME_RE.test(name) ? name : null;
 }
 
+/** Identity of a player on the board: case-insensitive, so "Povir" and "povir" are one row. */
+export const playerKey = (name) => name.toLowerCase();
+
+// Names that read like app output ("null", "error occured...") look like bugs on the board.
+const RESERVED = new Set(['null', 'none', 'nil', 'undefined', 'nan', 'empty', 'unknown', 'admin', 'administrator', 'system', 'root', 'moderator']);
+export function isReservedName(name) {
+	const key = name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+	return RESERVED.has(key) || /^(error|exception|помилка)/.test(key);
+}
+
+// Each player's best run per difficulty (all runs stay stored; hidden rows are moderated out).
+const BEST_RUNS = `
+	WITH ranked AS (
+		SELECT run_id, name, player_key, score, ticks, created_at,
+			ROW_NUMBER() OVER (PARTITION BY player_key ORDER BY score DESC, ticks ASC, created_at ASC) AS rn
+		FROM scores
+		WHERE difficulty = ?1 AND hidden = 0
+	),
+	best AS (SELECT * FROM ranked WHERE rn = 1)`;
+
 /**
  * Atomic per-IP rate limit: count and record in ONE statement, so concurrent requests
  * can't all pass the check before any of them is recorded. Returns true when allowed.
@@ -130,6 +150,7 @@ export function createHandler({ now = () => Date.now() } = {}) {
 
 			const name = cleanName(body.name);
 			if (!name) return error('bad-name', 400);
+			if (isReservedName(name)) return error('reserved-name', 400);
 
 			// Rate-limit every attempt (accepted or not) *before* the CPU-heavy replay.
 			const ipHash = await hashIp(request, env.TOKEN_SECRET);
@@ -144,21 +165,27 @@ export function createHandler({ now = () => Date.now() } = {}) {
 
 			try {
 				await env.DB.prepare(
-					'INSERT INTO scores (run_id, name, difficulty, score, ticks, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+					'INSERT INTO scores (run_id, name, player_key, difficulty, score, ticks, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
 				)
-					.bind(ticket.id, name, ticket.d, result.score, result.ticks, ipHash, now())
+					.bind(ticket.id, name, playerKey(name), ticket.d, result.score, result.ticks, ipHash, now())
 					.run();
 			} catch (e) {
 				if (/UNIQUE|PRIMARY KEY|constraint/i.test(String(e?.message ?? e))) return error('already-submitted', 409);
 				throw e;
 			}
 
-			const better = await env.DB.prepare(
-				'SELECT COUNT(*) AS n FROM scores WHERE difficulty = ? AND (score > ? OR (score = ? AND ticks < ?))',
+			// Rank = position of this player's best run among every player's best run.
+			const standing = await env.DB.prepare(
+				`${BEST_RUNS},
+				me AS (SELECT score, ticks, created_at FROM best WHERE player_key = ?2)
+				SELECT me.score AS best,
+					1 + (SELECT COUNT(*) FROM best b WHERE b.score > me.score
+						OR (b.score = me.score AND (b.ticks < me.ticks OR (b.ticks = me.ticks AND b.created_at < me.created_at)))) AS rank
+				FROM me`,
 			)
-				.bind(ticket.d, result.score, result.score, result.ticks)
+				.bind(ticket.d, playerKey(name))
 				.first();
-			return json({ ok: true, id: ticket.id, score: result.score, rank: (better?.n ?? 0) + 1 }, 201);
+			return json({ ok: true, id: ticket.id, score: result.score, best: standing?.best ?? result.score, rank: standing?.rank ?? 1 }, 201);
 		}
 
 		// --- Read the board ------------------------------------------------------------
@@ -166,7 +193,9 @@ export function createHandler({ now = () => Date.now() } = {}) {
 			const difficulty = url.searchParams.get('difficulty');
 			if (!Object.hasOwn(DIFFICULTIES, difficulty)) return error('bad-difficulty', 400);
 			const { results } = await env.DB.prepare(
-				'SELECT run_id AS id, name, score, ticks, created_at AS createdAt FROM scores WHERE difficulty = ? ORDER BY score DESC, ticks ASC, created_at ASC LIMIT ?',
+				`${BEST_RUNS}
+				SELECT run_id AS id, name, score, ticks, created_at AS createdAt
+				FROM best ORDER BY score DESC, ticks ASC, created_at ASC LIMIT ?2`,
 			)
 				.bind(difficulty, BOARD_SIZE)
 				.all();

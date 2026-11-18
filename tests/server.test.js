@@ -2,13 +2,13 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { createHandler, signTicket, cleanName } from '../server/src/worker.js';
+import { createHandler, signTicket, cleanName, isReservedName } from '../server/src/worker.js';
 import { playRun } from './helpers.js';
 
 // Minimal D1 stand-in over node:sqlite (same SQL dialect).
 function fakeD1() {
 	const db = new DatabaseSync(':memory:');
-	for (const m of ['0001_create_scores.sql', '0002_rate_events.sql']) {
+	for (const m of ['0001_create_scores.sql', '0002_rate_events.sql', '0003_player_key_and_hidden.sql']) {
 		db.exec(readFileSync(new URL(`../server/migrations/${m}`, import.meta.url), 'utf8'));
 	}
 	return {
@@ -193,12 +193,98 @@ test('oversized bodies are rejected by real byte count, even without Content-Len
 	assert.equal((await res.json()).error, 'bad-request');
 });
 
+/** Insert a stored run directly (as if submitted earlier). */
+function seedRun({ id, name, score, ticks = 100, difficulty = 'hard', hidden = 0, at = clock }) {
+	env.DB.db.prepare(
+		'INSERT INTO scores (run_id, name, player_key, difficulty, score, ticks, ip_hash, created_at, hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+	).run(id, name, name.toLowerCase(), difficulty, score, ticks, 'h', at, hidden);
+}
+
 test('leaderboard is ordered by score, then fewer ticks', async () => {
 	for (const [id, name, score, ticks] of [['a', 'Low', 3, 50], ['b', 'High', 9, 300], ['c', 'Fast', 9, 200]]) {
-		env.DB.db.prepare('INSERT INTO scores VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, name, 'hard', score, ticks, 'h', clock);
+		seedRun({ id, name, score, ticks });
 	}
 	const { data } = await call('GET', '/api/leaderboard?difficulty=hard');
 	assert.deepEqual(data.entries.map((e) => e.name), ['Fast', 'High', 'Low']);
+});
+
+test('board shows one row per player: their best run', async () => {
+	seedRun({ id: 'p1', name: 'povir', score: 52, ticks: 864 });
+	seedRun({ id: 'p2', name: 'povir', score: 18 });
+	seedRun({ id: 'p3', name: 'povir', score: 16 });
+	seedRun({ id: 's1', name: 'Софія', score: 34 });
+	const { data } = await call('GET', '/api/leaderboard?difficulty=hard');
+	assert.deepEqual(data.entries.map((e) => [e.name, e.score]), [['povir', 52], ['Софія', 34]]);
+	assert.equal(data.entries[0].id, 'p1');
+});
+
+test('player identity is case-insensitive, also for Cyrillic', async () => {
+	seedRun({ id: 'a', name: 'Povir', score: 10 });
+	seedRun({ id: 'b', name: 'POVIR', score: 12 });
+	seedRun({ id: 'c', name: 'Софія', score: 5 });
+	seedRun({ id: 'd', name: 'СОФІЯ', score: 7 });
+	const { data } = await call('GET', '/api/leaderboard?difficulty=hard');
+	assert.deepEqual(data.entries.map((e) => [e.name, e.score]), [['POVIR', 12], ['СОФІЯ', 7]]);
+});
+
+test('equal best scores: tie broken by fewer ticks, then earlier run', async () => {
+	seedRun({ id: 'x', name: 'Late', score: 9, ticks: 100, at: clock + 5 });
+	seedRun({ id: 'y', name: 'Early', score: 9, ticks: 100, at: clock });
+	seedRun({ id: 'z', name: 'Slow', score: 9, ticks: 300 });
+	const { data } = await call('GET', '/api/leaderboard?difficulty=hard');
+	assert.deepEqual(data.entries.map((e) => e.name), ['Early', 'Late', 'Slow']);
+});
+
+test('hidden runs stay stored but are left off the board', async () => {
+	seedRun({ id: 'h1', name: 'null', score: 99, hidden: 1 });
+	seedRun({ id: 'ok', name: 'Real', score: 5 });
+	const { data } = await call('GET', '/api/leaderboard?difficulty=hard');
+	assert.deepEqual(data.entries.map((e) => e.name), ['Real']);
+	assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM scores').get().n, 2);
+});
+
+test('board is capped at 10 players and isolated per difficulty', async () => {
+	for (let i = 0; i < 14; i++) seedRun({ id: `r${i}`, name: `Гравець ${i}`, score: i + 1 });
+	seedRun({ id: 'other', name: 'Інший рівень', score: 999, difficulty: 'easy' });
+	const { data } = await call('GET', '/api/leaderboard?difficulty=hard');
+	assert.equal(data.entries.length, 10);
+	assert.equal(data.entries[0].score, 14);
+	assert.ok(!data.entries.some((e) => e.name === 'Інший рівень'));
+});
+
+test('reserved names are rejected for new runs', async () => {
+	for (const name of ['null', 'None', 'empty', 'error occured...', 'Error 500', 'undefined', 'ADMIN', 'помилка']) {
+		const body = await playedRun('normal', name);
+		const res = await call('POST', '/api/scores', body);
+		assert.equal(res.data.error, 'reserved-name', name);
+	}
+	// Ordinary names that merely contain those letters are fine.
+	for (const name of ['Nonna', 'Terror', 'Nullius', 'MCP']) {
+		assert.equal(isReservedName(name), false, name);
+	}
+});
+
+test('submit returns the rank of the player best run, not of a weaker repeat', async () => {
+	seedRun({ id: 'top', name: 'Champion', score: 500, difficulty: 'normal' });
+	const first = await call('POST', '/api/scores', await playedRun('normal', 'Тестер'));
+	assert.equal(first.status, 201);
+	assert.equal(first.data.rank, 2);
+	assert.equal(first.data.best, first.data.score);
+
+	seedRun({ id: 'mine-best', name: 'тестер', score: 400, difficulty: 'normal' }); // same player, other case
+	const again = await call('POST', '/api/scores', await playedRun('normal', 'ТЕСТЕР'));
+	assert.equal(again.status, 201);
+	assert.equal(again.data.best, 400);
+	assert.equal(again.data.rank, 2);
+
+	const { data } = await call('GET', '/api/leaderboard?difficulty=normal');
+	assert.deepEqual(data.entries.map((e) => e.score), [500, 400]);
+});
+
+test('leaderboard responses are not cached by the browser for long', async () => {
+	const res = await call('GET', '/api/leaderboard?difficulty=easy');
+	assert.match(res.headers.get('Cache-Control') ?? '', /max-age=\d+/);
+	assert.ok(Number(/max-age=(\d+)/.exec(res.headers.get('Cache-Control'))[1]) <= 10);
 });
 
 test('CORS: unknown origins get no allow header; preflight works', async () => {
