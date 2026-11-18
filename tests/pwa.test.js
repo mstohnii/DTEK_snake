@@ -25,6 +25,19 @@ test('every precached file exists (a missing file breaks the SW install)', () =>
 	}
 });
 
+test('precache avoids URLs that hosts redirect (index.html -> ./ on Cloudflare)', () => {
+	const core = precacheList();
+	assert.ok(core.includes('./'));
+	assert.ok(!core.includes('index.html'));
+});
+
+test('site Worker never serves repo internals', () => {
+	const ignore = read('.assetsignore').split(/\r?\n/).map((l) => l.trim());
+	for (const p of ['.git', 'server', 'tests', 'docs', '.github', 'node_modules', 'wrangler.jsonc']) {
+		assert.ok(ignore.includes(p), `.assetsignore must list ${p}`);
+	}
+});
+
 test('manifest is valid and its icons exist', () => {
 	const m = JSON.parse(read('manifest.webmanifest'));
 	assert.equal(m.start_url, './');

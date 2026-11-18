@@ -1,0 +1,16 @@
+// Site Worker for the game itself (static files only). Deployed by Cloudflare
+// Workers Builds on every push to master (`npx wrangler deploy`).
+// The leaderboard API is a separate Worker in server/ (deployed with `cf deploy`).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dtek",
+  "compatibility_date": "2026-04-20",
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": ".",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "dtek.mstohnii.com", "custom_domain": true }
+  ]
+}

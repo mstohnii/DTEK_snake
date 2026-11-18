@@ -1,10 +1,10 @@
 // Offline support. Network-first for this site's own files, so updates show up
 // immediately when online; the cached copy is used when the network fails
 // (handy during an actual blackout). The leaderboard API is never cached.
-const VERSION = 'dtek-snake-v2.2.1';
+const VERSION = 'dtek-snake-v2.2.2';
 const CORE = [
+	// Not index.html: Cloudflare redirects it to ./ and a redirected response cannot serve a navigation.
 	'./',
-	'index.html',
 	'styles.css',
 	'manifest.webmanifest',
 	'src/main.js',
@@ -59,11 +59,11 @@ async function networkFirst(req) {
 			fetch(req),
 			new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), NETWORK_TIMEOUT_MS)),
 		]);
-		if (res.ok) cache.put(req, res.clone());
+		if (res.ok && !res.redirected) cache.put(req, res.clone());
 		return res;
 	} catch {
 		const cached = await cache.match(req, { ignoreSearch: true })
-			?? (req.mode === 'navigate' ? await cache.match('index.html') : undefined);
+			?? (req.mode === 'navigate' ? await cache.match('./') : undefined);
 		return cached ?? Response.error();
 	}
 }

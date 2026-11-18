@@ -1,0 +1,15 @@
+# Only the game is served. Everything else in the repo stays out of the site Worker.
+.git
+.github
+.cloudflare
+.wrangler
+node_modules
+server
+tests
+docs
+package.json
+package-lock.json
+wrangler.jsonc
+.gitignore
+.assetsignore
+README.md

@@ -12,7 +12,7 @@ export default defineConfig({
 			// HMAC key for run tickets: a long random string, uploaded as a secret.
 			TOKEN_SECRET: bindings.secret(),
 			// Comma-separated list of origins allowed to call the API.
-			ALLOWED_ORIGINS: bindings.text("https://mstohnii.github.io,https://dtek.mstohnii.workers.dev,http://localhost:5173"),
+			ALLOWED_ORIGINS: bindings.text("https://dtek.mstohnii.com,https://mstohnii.github.io,https://dtek.mstohnii.workers.dev,http://localhost:5173"),
 		},
 	},
 });

@@ -3,6 +3,7 @@
 Веб‑гра, що імітує вигляд таблиці відключень ДТЕК: 7 днів × 24 години, вертикальні підписи годин і поділ кожні 3 години. Змійка рухається по «клітинках розкладу», а на складніших рівнях графік заповнюють відключення й тимчасові стіни.
 
 ## Живе демо
+- **[dtek.mstohnii.com](https://dtek.mstohnii.com/)**: основна адреса (Cloudflare Workers)
 - GitHub Pages: [mstohnii.github.io/DTEK_snake](https://mstohnii.github.io/DTEK_snake/)
 - Cloudflare (Workers Builds з `master`): [dtek.mstohnii.workers.dev](https://dtek.mstohnii.workers.dev/)
 - API таблиці лідерів: `https://dtek-snake-leaderboard.mstohnii.workers.dev`
@@ -135,6 +136,8 @@ src/device.js          wake lock, вібрація, повний екран, ser
 sw.js                  офлайн‑кеш (network-first)
 manifest.webmanifest   встановлення як застосунок
 src/main.js            ігровий цикл і UI
+wrangler.jsonc         Worker сайту `dtek` + домен dtek.mstohnii.com (Workers Builds деплоїть при push у master)
+.assetsignore          що НЕ публікується на сайті (server/, tests/, docs/, …)
 server/src/worker.js   API таблиці лідерів (Cloudflare Worker)
 server/migrations/     схема D1
 server/dev-server.mjs  локальний API на Node
