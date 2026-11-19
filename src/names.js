@@ -11,6 +11,8 @@ export const LOOKALIKES = {
 
 /**
  * Who a name belongs to: case-insensitive with lookalikes folded, so "povir", "POVIR" and
- * "роvіr" (Cyrillic р, о, і) are one player: one row on the board, one owner.
+ * "роvіr" (Cyrillic р, о, і) are one player: one row on the board, one owner. NFKC first folds
+ * compatibility forms (full-width "ｐｏｖｉｒ", ligatures, superscripts) to their plain letters.
  */
-export const nameKey = (name) => [...name.trim().toLowerCase()].map((c) => LOOKALIKES[c] ?? c).join('');
+export const nameKey = (name) =>
+	[...name.normalize('NFKC').trim().toLowerCase()].map((c) => LOOKALIKES[c] ?? c).join('');

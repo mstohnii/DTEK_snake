@@ -367,6 +367,7 @@ test('two devices racing for one free name: exactly one wins', async () => {
 	const statuses = (await Promise.all([a, b].map((body) => call('POST', '/api/scores', body)))).map((r) => r.status).sort();
 	assert.deepEqual(statuses, [201, 409]);
 	assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM players').get().n, 1);
+	assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM scores WHERE hidden = 1').get().n, 0, 'loser left no hidden row');
 });
 
 test('names already on the board are claimed by their next verified run', async () => {
@@ -391,4 +392,28 @@ test('the owner playing under lookalike spellings still gets one row (best run)'
 	assert.equal(data.entries.length, 1);
 	assert.equal(data.entries[0].score, Math.max(a.data.score, b.data.score));
 	assert.equal(b.data.best, data.entries[0].score);
+});
+
+test('a used ticket cannot be replayed to claim other names', async () => {
+	const body = await playedRun('normal', 'Honest', KEY);
+	assert.equal((await call('POST', '/api/scores', body)).status, 201);
+	for (const name of ['Squatter', 'povir', 'Admin2']) {
+		const res = await call('POST', '/api/scores', { ...body, name, key: OTHER_KEY });
+		assert.equal(res.data.error, 'already-submitted', name);
+	}
+	const owned = env.DB.db.prepare('SELECT name FROM players ORDER BY name').all().map((r) => r.name);
+	assert.deepEqual(owned, ['Honest']);
+});
+
+test('a name-taken refusal leaves no hidden leftovers and the ticket reusable', async () => {
+	assert.equal((await submitAs('Taken', KEY)).status, 201);
+	const body = await playedRun('normal', 'Taken', OTHER_KEY);
+	assert.equal((await call('POST', '/api/scores', body)).data.error, 'name-taken');
+	assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM scores WHERE hidden = 1').get().n, 0);
+	assert.equal((await call('POST', '/api/scores', { ...body, name: 'Free' })).status, 201);
+});
+
+test('full-width and other compatibility forms fold to the same name', () => {
+	assert.equal(nameKey('ｐｏｖｉｒ'), nameKey('povir'));
+	assert.equal(nameKey('ＰＯＶＩＲ'), nameKey('povir'));
 });

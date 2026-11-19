@@ -176,7 +176,7 @@ export function createHandler({ now = () => Date.now() } = {}) {
 			if (!(await takeRateSlot(env.DB, 'submit', ipHash, SUBMITS_PER_MINUTE, now()))) return error('rate-limited', 429);
 			await env.DB.prepare('DELETE FROM rate_events WHERE created_at < ?').bind(now() - 60 * 60_000).run();
 
-			// Cheap early answer for a taken name, before the replay; claimName() settles races.
+			// Cheap early answer for a taken name, before the replay; claimName() below settles races.
 			const owner = await nameOwner(env.DB, nameKey(name));
 			if (owner && owner !== keyHash) return error('name-taken', 409);
 
@@ -185,12 +185,13 @@ export function createHandler({ now = () => Date.now() } = {}) {
 			if (result.score !== body.score) return error('score-mismatch', 422);
 			if (result.score <= 0) return error('zero-score', 422);
 			if (age < result.minDurationMs * SPEED_TOLERANCE) return error('too-fast', 422);
-			// Only verified runs claim names, so nobody can squat names with junk submits.
-			if (!(await claimName(env.DB, name, keyHash, now()))) return error('name-taken', 409);
 
+			// Use up the ticket first (run_id is the primary key), stored hidden until the name
+			// check passes. Only then claim the name, so one ticket can claim at most one name:
+			// replaying a used ticket under other names stops here with already-submitted.
 			try {
 				await env.DB.prepare(
-					'INSERT INTO scores (run_id, name, player_key, difficulty, score, ticks, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+					'INSERT INTO scores (run_id, name, player_key, difficulty, score, ticks, ip_hash, created_at, hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)',
 				)
 					.bind(ticket.id, name, nameKey(name), ticket.d, result.score, result.ticks, ipHash, now())
 					.run();
@@ -198,6 +199,12 @@ export function createHandler({ now = () => Date.now() } = {}) {
 				if (/UNIQUE|PRIMARY KEY|constraint/i.test(String(e?.message ?? e))) return error('already-submitted', 409);
 				throw e;
 			}
+			if (!(await claimName(env.DB, name, keyHash, now()))) {
+				// Lost a race for the name: give the ticket back so the player can pick another name.
+				await env.DB.prepare('DELETE FROM scores WHERE run_id = ? AND hidden = 1').bind(ticket.id).run();
+				return error('name-taken', 409);
+			}
+			await env.DB.prepare('UPDATE scores SET hidden = 0 WHERE run_id = ?').bind(ticket.id).run();
 
 			// Rank = position of this player's best run among every player's best run.
 			const standing = await env.DB.prepare(
