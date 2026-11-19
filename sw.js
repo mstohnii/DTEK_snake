@@ -1,7 +1,7 @@
 // Offline support. Network-first for this site's own files, so updates show up
 // immediately when online; the cached copy is used when the network fails
 // (handy during an actual blackout). The leaderboard API is never cached.
-const VERSION = 'dtek-snake-v2.2.2';
+const VERSION = 'dtek-snake-v2.3.0';
 const CORE = [
 	// Not index.html: Cloudflare redirects it to ./ and a redirected response cannot serve a navigation.
 	'./',
@@ -16,6 +16,7 @@ const CORE = [
 	'src/input.js',
 	'src/storage.js',
 	'src/leaderboard.js',
+	'src/names.js',
 	'src/device.js',
 	'assets/snake.svg',
 	'assets/target.svg',

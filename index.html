@@ -99,6 +99,20 @@
 			<ol class="lb-list" id="lb-list"></ol>
 			<p class="lb-note">Показано найкращий результат кожного гравця.</p>
 			<p class="lb-status" id="lb-status"></p>
+
+			<details class="player-code" id="player-code">
+				<summary>Код гравця: ваше ім’я на інших пристроях</summary>
+				<p>Ім’я закріплюється за пристроєм, з якого ви вперше надіслали з ним результат. Ніхто інший не зможе грати під ним або під схожим на нього написанням. Щоб грати під своїм ім’ям на іншому пристрої, скопіюйте код тут і вставте його там.</p>
+				<div class="submit-row">
+					<input id="player-code-value" type="text" readonly aria-label="Код гравця цього пристрою" spellcheck="false" />
+					<button id="btn-copy-code" class="btn" type="button">Копіювати</button>
+				</div>
+				<form class="submit-row" id="restore-form">
+					<input id="restore-code" type="text" placeholder="Код з іншого пристрою" aria-label="Код гравця з іншого пристрою" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+					<button class="btn" type="submit">Застосувати</button>
+				</form>
+				<p class="code-status" id="code-status" role="status">Вставлений код замінить код цього пристрою.</p>
+			</details>
 		</section>
 
 		<footer class="tips">
@@ -122,6 +136,10 @@
 				</div>
 			</form>
 			<p class="submit-status" id="submit-status" role="status"></p>
+			<form class="submit-form submit-row" id="restore-inline" hidden>
+				<input id="restore-inline-code" type="text" placeholder="Код гравця" aria-label="Код гравця з іншого пристрою" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" />
+				<button class="btn primary" type="submit">Застосувати й надіслати</button>
+			</form>
 
 			<div class="card-actions">
 				<button id="btn-close" class="btn" type="button">Закрити</button>

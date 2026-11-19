@@ -7,8 +7,13 @@
 //                           shared game logic, and stores the score *it* computed.
 // Checks: valid signature, ticket not expired and used once, replay reaches a crash at the
 // claimed tick, claimed score matches, run wasn't played faster than real time, rate limit.
+// Names: the first verified run under a name claims it for the device key that sent it
+// (only its SHA-256 is stored); lookalike spellings count as the same name.
 import { DIFFICULTIES } from '../../src/config.js';
 import { replay } from '../../src/replay.js';
+import { nameKey } from '../../src/names.js';
+
+export { nameKey };
 
 const TICKET_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const MAX_BODY_BYTES = 256 * 1024;
@@ -19,6 +24,8 @@ const BOARD_SIZE = 10;
 // The browser may lag a little behind the ideal pace; accept runs at ≥ 85% of real time.
 const SPEED_TOLERANCE = 0.85;
 const NAME_RE = /^[\p{L}\p{N} _.\-']{2,16}$/u;
+// Device key: 32 random bytes, base64url (43 chars), made by the browser. Also the recovery code.
+const KEY_RE = /^[A-Za-z0-9_-]{32,64}$/;
 
 const enc = new TextEncoder();
 
@@ -59,8 +66,18 @@ export function cleanName(raw) {
 	return NAME_RE.test(name) ? name : null;
 }
 
-/** Identity of a player on the board: case-insensitive, so "Povir" and "povir" are one row. */
-export const playerKey = (name) => name.toLowerCase();
+async function nameOwner(db, key) {
+	return (await db.prepare('SELECT key_hash FROM players WHERE name_key = ?').bind(key).first())?.key_hash ?? null;
+}
+
+/** Accept a name for this device key: claim it if free (atomically), else the key must match. */
+async function claimName(db, name, keyHash, nowMs) {
+	const key = nameKey(name);
+	await db.prepare('INSERT INTO players (name_key, name, key_hash, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (name_key) DO NOTHING')
+		.bind(key, name, keyHash, nowMs)
+		.run();
+	return (await nameOwner(db, key)) === keyHash;
+}
 
 // Names that read like app output ("null", "error occured...") look like bugs on the board.
 const RESERVED = new Set(['null', 'none', 'nil', 'undefined', 'nan', 'empty', 'unknown', 'admin', 'administrator', 'system', 'root', 'moderator']);
@@ -151,23 +168,31 @@ export function createHandler({ now = () => Date.now() } = {}) {
 			const name = cleanName(body.name);
 			if (!name) return error('bad-name', 400);
 			if (isReservedName(name)) return error('reserved-name', 400);
+			if (typeof body.key !== 'string' || !KEY_RE.test(body.key)) return error('bad-key', 400);
+			const keyHash = await sha256Hex(body.key);
 
 			// Rate-limit every attempt (accepted or not) *before* the CPU-heavy replay.
 			const ipHash = await hashIp(request, env.TOKEN_SECRET);
 			if (!(await takeRateSlot(env.DB, 'submit', ipHash, SUBMITS_PER_MINUTE, now()))) return error('rate-limited', 429);
 			await env.DB.prepare('DELETE FROM rate_events WHERE created_at < ?').bind(now() - 60 * 60_000).run();
 
+			// Cheap early answer for a taken name, before the replay; claimName() settles races.
+			const owner = await nameOwner(env.DB, nameKey(name));
+			if (owner && owner !== keyHash) return error('name-taken', 409);
+
 			const result = replay({ seed: ticket.seed, difficulty: ticket.d, inputs: body.inputs, endTick: body.endTick });
 			if (!result.ok) return error(`replay-${result.reason}`, 422);
 			if (result.score !== body.score) return error('score-mismatch', 422);
 			if (result.score <= 0) return error('zero-score', 422);
 			if (age < result.minDurationMs * SPEED_TOLERANCE) return error('too-fast', 422);
+			// Only verified runs claim names, so nobody can squat names with junk submits.
+			if (!(await claimName(env.DB, name, keyHash, now()))) return error('name-taken', 409);
 
 			try {
 				await env.DB.prepare(
 					'INSERT INTO scores (run_id, name, player_key, difficulty, score, ticks, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
 				)
-					.bind(ticket.id, name, playerKey(name), ticket.d, result.score, result.ticks, ipHash, now())
+					.bind(ticket.id, name, nameKey(name), ticket.d, result.score, result.ticks, ipHash, now())
 					.run();
 			} catch (e) {
 				if (/UNIQUE|PRIMARY KEY|constraint/i.test(String(e?.message ?? e))) return error('already-submitted', 409);
@@ -183,7 +208,7 @@ export function createHandler({ now = () => Date.now() } = {}) {
 						OR (b.score = me.score AND (b.ticks < me.ticks OR (b.ticks = me.ticks AND b.created_at < me.created_at)))) AS rank
 				FROM me`,
 			)
-				.bind(ticket.d, playerKey(name))
+				.bind(ticket.d, nameKey(name))
 				.first();
 			return json({ ok: true, id: ticket.id, score: result.score, best: standing?.best ?? result.score, rank: standing?.rank ?? 1 }, 201);
 		}

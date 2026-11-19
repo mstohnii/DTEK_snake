@@ -5,6 +5,7 @@ const BEST_KEY = 'dtek_snake_best_v3';
 const BEST_V2_KEY = 'dtek_snake_best_v2';
 const LEGACY_BEST_KEY = 'dtek_snake_best';
 export const SETTINGS_KEY = 'dtek_snake_settings';
+const PLAYER_CODE_KEY = 'dtek_snake_player_code';
 
 function read(key) {
 	try { return window.localStorage.getItem(key); } catch { return null; }
@@ -29,6 +30,15 @@ export function loadBestScores() {
 
 export function saveBestScores(scores) {
 	write(BEST_KEY, JSON.stringify(scores));
+}
+
+/** The device's player code (proves ownership of names on the leaderboard), or null. */
+export function loadPlayerCode() {
+	return read(PLAYER_CODE_KEY);
+}
+
+export function savePlayerCode(code) {
+	write(PLAYER_CODE_KEY, code);
 }
 
 export function loadSettings() {

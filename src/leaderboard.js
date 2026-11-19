@@ -1,4 +1,5 @@
 // Client for the leaderboard Worker (server/src/worker.js).
+import { nameKey } from './names.js';
 
 const TIMEOUT_MS = 8000;
 
@@ -27,10 +28,26 @@ export function submitResultText({ score, best, rank }, levelLabel) {
 	return `Збережено! Ви на ${place}.`;
 }
 
-/** The viewer's own row: the run just submitted, or any row with the name they play under. */
+// --- Player code ------------------------------------------------------------------------
+// A random device key proves who owns a name (the server keeps only its hash). The same
+// string is the "player code" a person copies to move their name to another device.
+
+/** New 32-byte key, base64url (43 chars). */
+export function newPlayerCode(cryptoObj = globalThis.crypto) {
+	const bytes = cryptoObj.getRandomValues(new Uint8Array(32));
+	return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** A pasted code, cleaned up (spaces, line breaks), or null when it can't be a code. */
+export function parsePlayerCode(text) {
+	const code = String(text ?? '').replace(/\s+/g, '');
+	return /^[A-Za-z0-9_-]{32,64}$/.test(code) ? code : null;
+}
+
+/** The viewer's own row: the run just submitted, or the row of the name they play under. */
 export function isOwnEntry(entry, { lastId, playerName }) {
 	if (lastId && entry.id === lastId) return true;
-	return Boolean(playerName) && entry.name.toLowerCase() === playerName.trim().toLowerCase();
+	return Boolean(playerName?.trim()) && nameKey(entry.name) === nameKey(playerName);
 }
 
 export function createLeaderboardClient(baseUrl) {
@@ -72,6 +89,8 @@ const ERROR_TEXT = {
 	network: 'Немає зв’язку з сервером таблиці.',
 	'bad-name': 'Ім’я: 2–16 символів — літери, цифри, пробіл, крапка, дефіс.',
 	'reserved-name': 'Це ім’я схоже на системне повідомлення. Оберіть інше.',
+	'name-taken': 'Це ім’я вже зайняте іншим гравцем. Оберіть інше або, якщо воно ваше, вставте код гравця з іншого пристрою.',
+	'bad-key': 'Оновіть сторінку, щоб надіслати результат.',
 	'rate-limited': 'Забагато спроб. Спробуйте за хвилину.',
 	'already-submitted': 'Цей результат уже в таблиці.',
 	'ticket-expired': 'Гра тривала надто довго, щоб потрапити в таблицю.',

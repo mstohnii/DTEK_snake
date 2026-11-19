@@ -5,11 +5,15 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { playRun } from '../helpers.js';
+import { createGame, start, tick } from '../../src/game.js';
 
 const PORT = 18787;
 const API = `http://localhost:${PORT}`;
 const ORIGIN = 'http://localhost:5173';
 let ip = '10.0.0.1';
+// Player codes (device keys). Most scenarios play on the main device; ownership ones use others.
+const MAIN_KEY = 'M'.repeat(43);
+const deviceKey = (c) => c.repeat(43);
 const results = [];
 
 const server = spawn(process.execPath, ['--no-warnings', fileURLToPath(new URL('../../server/dev-server.mjs', import.meta.url))], {
@@ -36,14 +40,14 @@ const advance = (ms) => fetch(`${API}/__dev/clock?advance=${ms}`, { method: 'POS
 const newIp = () => { ip = `10.0.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`; };
 
 /** Real flow: ticket → bot plays on that seed → wait real time (via clock) → submit body. */
-async function playedRun(difficulty, name) {
+async function playedRun(difficulty, name, key = MAIN_KEY) {
 	const t = await http('POST', '/api/runs', { difficulty });
 	if (t.status !== 200) throw new Error(`ticket ${t.status} ${JSON.stringify(t.data)}`);
 	const run = playRun({ seed: t.data.seed, difficulty });
-	return { body: { token: t.data.token, name, inputs: run.inputs, endTick: run.endTick, score: run.score }, run };
+	return { body: { token: t.data.token, name, key, inputs: run.inputs, endTick: run.endTick, score: run.score }, run };
 }
-async function submitPlayed(difficulty, name) {
-	const { body, run } = await playedRun(difficulty, name);
+async function submitPlayed(difficulty, name, key) {
+	const { body, run } = await playedRun(difficulty, name, key);
 	await advance(15 * 60_000);
 	return { res: await http('POST', '/api/scores', body), run, body };
 }
@@ -129,6 +133,14 @@ await check('dedupe', 'Cyrillic case variants are the same player', async () => 
 	expect(firstScore > 0, 'first score recorded');
 });
 
+await check('dedupe', 'owner using a lookalike spelling (роvіr) keeps one row', async () => {
+	const { res } = await submitPlayed('hard', 'роvіr');
+	eq(res.status, 201, JSON.stringify(res.data));
+	const rows = (await board('hard')).filter((e) => ['povir', 'роvіr'].includes(e.name.toLowerCase()));
+	eq(rows.length, 1, 'rows');
+	eq(res.data.best, rows[0].score, 'best reported');
+});
+
 // --- Names --------------------------------------------------------------------------------
 await check('names', 'system-looking names are rejected (reserved-name)', async () => {
 	for (const name of ['null', 'None', 'empty', 'undefined', 'error occured...', 'ERROR', 'Помилка 404', 'admin']) {
@@ -150,6 +162,58 @@ await check('names', 'invalid names are rejected (bad-name)', async () => {
 await check('names', 'ordinary names containing reserved words are fine', async () => {
 	const { res } = await submitPlayed('insane', 'Terror Nonna');
 	eq(res.status, 201, JSON.stringify(res.data));
+});
+
+// --- Name ownership ------------------------------------------------------------------------
+await check('ownership', 'a claimed name is refused to another device (name-taken)', async () => {
+	// "Софія" was claimed by the main device in the happy-path scenario.
+	const { res } = await submitPlayed('normal', 'Софія', deviceKey('X'));
+	eq([res.status, res.data.error], [409, 'name-taken'], 'response');
+	eq((await board('normal')).filter((e) => e.name.toLowerCase() === 'софія').length, 1, 'board untouched');
+});
+await check('ownership', 'lookalike spellings of a claimed name are refused', async () => {
+	// Latin C/o/i inside the Cyrillic name, Cyrillic р/о/і inside "povir", digit zero.
+	for (const name of ['Coфiя', 'СОФIЯ', 'роvіr', 'POVІR', 'p0vir']) {
+		newIp();
+		const { res } = await submitPlayed('hard', name, deviceKey('X'));
+		eq([res.status, res.data.error], [409, 'name-taken'], name);
+	}
+});
+await check('ownership', 'a refused name keeps the ticket: retry under a free name works', async () => {
+	const { body } = await playedRun('easy', 'povir', deviceKey('Y'));
+	await advance(15 * 60_000);
+	eq((await http('POST', '/api/scores', body)).data.error, 'name-taken', 'first try');
+	const retry = await http('POST', '/api/scores', { ...body, name: 'Новенький' });
+	eq(retry.status, 201, JSON.stringify(retry.data));
+});
+await check('ownership', 'player code moves a name to another device', async () => {
+	// Another IP (a phone) that pasted the main device's code.
+	const { res } = await submitPlayed('easy', 'POVIR', MAIN_KEY);
+	eq(res.status, 201, JSON.stringify(res.data));
+});
+await check('ownership', 'missing, short or junk player code → bad-key', async () => {
+	for (const key of [undefined, '', 'short', 'з пробілами але досить довгий рядок!!!!', 'x'.repeat(65), 7]) {
+		const { body } = await playedRun('normal', 'Keyless');
+		await advance(15 * 60_000);
+		const r = await http('POST', '/api/scores', { ...body, key });
+		eq([r.status, r.data.error], [400, 'bad-key'], String(key));
+		newIp();
+	}
+});
+await check('ownership', 'two devices race for a free name in parallel → exactly one wins', async () => {
+	const a = await playedRun('normal', 'Гонка', deviceKey('A'));
+	const b = await playedRun('normal', 'ГОНКА', deviceKey('B'));
+	await advance(15 * 60_000);
+	const res = await Promise.all([a, b].map(({ body }) => http('POST', '/api/scores', body)));
+	eq(res.map((r) => r.status).sort(), [201, 409], 'statuses');
+	eq(res.find((r) => r.status === 409).data.error, 'name-taken', 'loser error');
+});
+await check('ownership', 'a rejected (cheated) run does not claim the name', async () => {
+	const { body } = await playedRun('normal', 'Захоплення', deviceKey('Z'));
+	await advance(15 * 60_000);
+	eq((await http('POST', '/api/scores', { ...body, score: body.score + 5 })).data.error, 'score-mismatch', 'cheat');
+	newIp();
+	eq((await submitPlayed('normal', 'Захоплення', MAIN_KEY)).res.status, 201, 'real owner still free to claim');
 });
 
 // --- Anti-cheat -----------------------------------------------------------------------------
@@ -190,11 +254,19 @@ await check('anti-cheat', 'forged / garbled token → bad-ticket', async () => {
 	}
 });
 await check('anti-cheat', 'zero-point game → zero-score', async () => {
-	const t = await http('POST', '/api/runs', { difficulty: 'normal' });
-	await advance(15 * 60_000);
-	// No turns: the snake runs straight into the right wall after 20 ticks with 0 points.
-	const r = await http('POST', '/api/scores', { token: t.data.token, name: 'Nobody', inputs: [], endTick: 20, score: 0 });
-	eq(r.data.error, 'zero-score', 'error');
+	// No turns: the snake runs straight into a wall. Pick a seed whose first food is off that path.
+	for (let tries = 0; tries < 20; tries++) {
+		const t = await http('POST', '/api/runs', { difficulty: 'normal' });
+		const g = createGame({ seed: t.data.seed, difficulty: 'normal' });
+		start(g);
+		while (g.status === 'running') tick(g);
+		if (g.score !== 0) continue;
+		await advance(15 * 60_000);
+		const r = await http('POST', '/api/scores', { token: t.data.token, name: 'Nobody', key: MAIN_KEY, inputs: [], endTick: g.ticks, score: 0 });
+		eq(r.data.error, 'zero-score', 'error');
+		return;
+	}
+	throw new Error('no zero-score seed in 20 tickets');
 });
 
 // --- Abuse limits ------------------------------------------------------------------------------

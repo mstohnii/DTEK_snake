@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { createHandler } from '../server/src/worker.js';
+import { nameKey } from '../src/names.js';
 
 const migration = (name) => readFileSync(new URL(`../server/migrations/${name}`, import.meta.url), 'utf8');
 
@@ -65,7 +66,7 @@ test('0003 hides exactly the system-looking names', () => {
 	assert.deepEqual(hidden, ['None', 'empty', 'error occured...', 'null']);
 });
 
-test('0003 backfills the same player key the Worker uses (incl. Cyrillic)', () => {
+test('0003 backfills lowercase player keys (incl. Cyrillic capitals)', () => {
 	const db = legacyDb();
 	db.exec(migration('0003_player_key_and_hidden.sql'));
 	for (const { name, player_key } of db.prepare('SELECT name, player_key FROM scores').all()) {
@@ -76,6 +77,7 @@ test('0003 backfills the same player key the Worker uses (incl. Cyrillic)', () =
 test('after the upgrade the production board shows one row per real player', async () => {
 	const db = legacyDb();
 	db.exec(migration('0003_player_key_and_hidden.sql'));
+	db.exec(migration('0004_players.sql'));
 	assert.deepEqual(await board(db, 'normal'), [['povir', 52], ['Софія', 34], ['Dominic Torrent', 20], ['MCP', 11]]);
 	assert.deepEqual(await board(db, 'insane'), [['povir', 13], ['мяу', 4]]);
 });
@@ -85,4 +87,28 @@ test('0003 can be applied to an empty database', () => {
 	for (const m of ['0001_create_scores.sql', '0002_rate_events.sql', '0003_player_key_and_hidden.sql']) db.exec(migration(m));
 	const cols = db.prepare('PRAGMA table_info(scores)').all().map((c) => c.name);
 	assert.ok(cols.includes('player_key') && cols.includes('hidden'));
+});
+
+test('0004 adds the players table and keeps runs and board as they were', async () => {
+	const db = legacyDb();
+	db.exec(migration('0003_player_key_and_hidden.sql'));
+	const before = snapshot(db);
+	const boardBefore = await board(db, 'normal');
+	db.exec(migration('0004_players.sql'));
+	assert.deepEqual(snapshot(db), before);
+	assert.deepEqual(await board(db, 'normal'), boardBefore);
+	assert.equal(db.prepare('SELECT COUNT(*) AS n FROM players').get().n, 0, 'existing names start unclaimed');
+	db.exec(migration('0004_players.sql')); // re-running is harmless
+});
+
+test('0004 folds stored keys exactly like the Worker (nameKey), incl. lookalikes', () => {
+	const db = legacyDb();
+	db.exec(migration('0003_player_key_and_hidden.sql'));
+	// Rows the previous Worker wrote between 0003 and 0004: JS-lowercased keys, lookalike spellings.
+	const ins = db.prepare('INSERT INTO scores (run_id, name, player_key, difficulty, score, ticks, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+	for (const [i, name] of ['роvіr', 'P0VIR', 'ΜCΡ', 'Coфія'].entries()) ins.run(`late-${i}`, name, name.toLowerCase(), 'normal', 1, 10, 'ip', 1_800_000_000_000 + i);
+	db.exec(migration('0004_players.sql'));
+	for (const { name, player_key } of db.prepare('SELECT name, player_key FROM scores').all()) {
+		assert.equal(player_key, nameKey(name), name);
+	}
 });

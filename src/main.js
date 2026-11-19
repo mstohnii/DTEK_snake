@@ -2,10 +2,12 @@ import { COLS, ROWS, DIFFICULTIES, THEMES } from './config.js';
 import { createGame, queueDirection, start, togglePause, pause, tick, tickMs, cellMap } from './game.js';
 import { createRenderer } from './renderer.js';
 import { bindKeyboard, bindSwipe, bindButtons } from './input.js';
-import { loadBestScores, saveBestScores, loadSettings, saveSettings } from './storage.js';
+import { loadBestScores, saveBestScores, loadSettings, saveSettings, loadPlayerCode, savePlayerCode } from './storage.js';
 import { createRecorder } from './replay.js';
 import { randomSeed } from './rng.js';
-import { createLeaderboardClient, resolveApiBase, errorText, submitResultText, isOwnEntry } from './leaderboard.js';
+import {
+	createLeaderboardClient, resolveApiBase, errorText, submitResultText, isOwnEntry, newPlayerCode, parsePlayerCode,
+} from './leaderboard.js';
 import {
 	isTouchDevice, createWakeLock, vibrate, fullscreenSupported, toggleFullscreen,
 	onFullscreenChange, onRotate, registerServiceWorker,
@@ -40,6 +42,14 @@ const els = {
 	lbTabs: $('lb-tabs'),
 	lbList: $('lb-list'),
 	lbStatus: $('lb-status'),
+	playerCode: $('player-code'),
+	playerCodeValue: $('player-code-value'),
+	btnCopyCode: $('btn-copy-code'),
+	restoreForm: $('restore-form'),
+	restoreCode: $('restore-code'),
+	codeStatus: $('code-status'),
+	restoreInline: $('restore-inline'),
+	restoreInlineCode: $('restore-inline-code'),
 };
 
 const CRASH_TEXT = {
@@ -55,6 +65,12 @@ const renderer = createRenderer(els.board, { cols: COLS, rows: ROWS });
 const settings = loadSettings();
 const bestScores = loadBestScores();
 const api = createLeaderboardClient(resolveApiBase());
+// Proves this device owns the names it has played under (see "Код гравця" under the board).
+let playerCode = parsePlayerCode(loadPlayerCode());
+if (!playerCode) {
+	playerCode = newPlayerCode();
+	savePlayerCode(playerCode);
+}
 
 let game;
 let recorder;
@@ -283,6 +299,8 @@ function endGame(reason, won = false) {
 		: ticket ? ''
 		: 'Ця гра була без рейтингу (немає зв’язку з сервером), тож у таблицю вона не потрапить.';
 	els.submitStatus.className = 'submit-status';
+	els.restoreInline.hidden = true;
+	els.restoreInlineCode.value = '';
 
 	els.overlay.hidden = false;
 	(canSubmit && !settings.playerName ? els.playerName : els.btnRestart).focus();
@@ -297,12 +315,14 @@ async function submitScore() {
 	settings.playerName = name;
 	saveSettings(settings);
 	els.btnSubmit.disabled = true;
+	els.restoreInline.hidden = true;
 	els.submitStatus.className = 'submit-status';
 	els.submitStatus.textContent = 'Перевіряємо гру на сервері…';
 	try {
 		const res = await api.submit({
 			token: ticket.token,
 			name,
+			key: playerCode,
 			inputs: recorder.inputs,
 			endTick: game.ticks,
 			score: game.score,
@@ -318,8 +338,47 @@ async function submitScore() {
 		els.btnSubmit.disabled = e.code === 'already-submitted';
 		els.submitStatus.classList.add('error');
 		els.submitStatus.textContent = errorText(e.code);
+		if (e.code === 'name-taken') els.restoreInline.hidden = false;
 	}
 }
+
+// --- Player code ------------------------------------------------------------------------
+
+function useCode(text, statusEl) {
+	const code = parsePlayerCode(text);
+	const say = (msg, kind) => { statusEl.textContent = msg; statusEl.className = `${statusEl.classList[0]} ${kind}`; };
+	if (!code) { say('Це не схоже на код гравця: скопіюйте його повністю.', 'error'); return false; }
+	if (code === playerCode) { say('Це вже код цього пристрою.', 'error'); return false; }
+	playerCode = code;
+	savePlayerCode(code);
+	els.playerCodeValue.value = code;
+	say('Код застосовано: ваші імена тепер доступні й на цьому пристрої.', 'ok');
+	return true;
+}
+
+els.playerCode.addEventListener('toggle', () => { if (els.playerCode.open) els.playerCodeValue.value = playerCode; });
+els.playerCodeValue.addEventListener('focus', () => els.playerCodeValue.select());
+els.btnCopyCode.addEventListener('click', async () => {
+	els.playerCodeValue.value = playerCode;
+	let copied = false;
+	try {
+		await navigator.clipboard.writeText(playerCode);
+		copied = true;
+	} catch {
+		els.playerCodeValue.select();
+		try { copied = document.execCommand('copy'); } catch { /* not supported */ }
+	}
+	els.codeStatus.className = `code-status ${copied ? 'ok' : ''}`;
+	els.codeStatus.textContent = copied ? 'Скопійовано. Нікому не передавайте цей код.' : 'Виділіть код і скопіюйте вручну.';
+});
+els.restoreForm.addEventListener('submit', (e) => {
+	e.preventDefault();
+	if (useCode(els.restoreCode.value, els.codeStatus)) els.restoreCode.value = '';
+});
+els.restoreInline.addEventListener('submit', (e) => {
+	e.preventDefault();
+	if (useCode(els.restoreInlineCode.value, els.submitStatus)) submitScore();
+});
 
 // --- Leaderboard panel ----------------------------------------------------------------
 
